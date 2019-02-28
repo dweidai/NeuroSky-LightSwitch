@@ -1,22 +1,33 @@
 from NeuroPy import NeuroPy
+import keyboard
+import serial
 
-def attention_callback(attention_value):
-    "this function will be called everytime NeuroPy has a new value for attention"
-    print ("Value of attention is",attention_value)
-    #do other stuff (fire a rocket), based on the obtained value of attention_value
-    #do some more stuff
-    return None
+print("program started")
+f = open("testfile.txt", "w")
+ser = serial.Serial('/dev/tty.usbserial', 9600)
 
-if __name__ == '__main__':
-    object1=NeuroPy("COM6") #If port not given 57600 is automatically assumed
-    #object1=NeuroPy("/dev/rfcomm0") for linux
+#call start method
+confirm_meditate = 0
+confirm_attention = 0
+nb = input('To quit, press spacebar')
+while True:
+    if keyboard_is_pressed('0'):
+        ser.write("0")
+        f.write("0 ")
+    elif keyboard_is_pressed('1'):
+        ser.write("1")
+        f.write("1 ")
+    try:
+        if keyboard.is_pressed('q'):
+            ser.write("0")
+            f.write("SESSION ENDED")
+            break
+        else:
+            pass
+    except:
+        ser.write("0")
+        f.write("Quit UNEXPECTED")
+        print("\t!!!!\nIncorrect input, quit unexpected\n\t!!!!!!\n")
+        break  # if user pressed a key other than the given key the loop will break
 
-    #set call back:
-    object1.setCallBack("attention",attention_callback)
 
-    #call start method
-    object1.start()
-
-    while True:
-        if(object1.meditation>70): #another way of accessing data provided by headset (1st being call backs)
-            object1.stop() #if meditation level reaches above 70, stop fetching data from the headset
