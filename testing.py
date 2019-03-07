@@ -24,7 +24,16 @@ print("headset closed")
 while True:
     print("Attention: ", headset.attention)
     print("Meditation: ", headset.meditation)
-
+    print("RawValue: ",  headset.rawValue)
+    print("Delta: ",  headset.delta)
+    print("Theta: ",  headset.theta)
+    print("LowAlpha: ",  headset.lowAlpha)
+    print("HighAlpha: ",  headset.highAlpha)
+    print("LowBeta: ",  headset.lowBeta)
+    print("HighBeta: ",  headset.highBeta)
+    print("LowGamma: ",  headset.lowGamma)
+    print("MidGamma: ",  headset.midGamma)
+    time.sleep(0.1)
     try:
         if keyboard.is_pressed('q'):
             break
@@ -32,6 +41,10 @@ while True:
             pass
     except:
         print("\t!!!!\nquit program\n\t!!!!!!\n")
+        headset.stop()
+        print(headset)
+        print("headset closed")
+
         break  # if user pressed a key other than the given key the loop will break
 
 headset.stop()
