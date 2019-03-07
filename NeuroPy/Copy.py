@@ -1,50 +1,11 @@
-##Copyright (c) 2013, sahil singh
-##
-##All rights reserved.
-##
-##Redistribution and use in source and binary forms, with or without modification,
-##are permitted provided that the following conditions are met:
-##
-##    * Redistributions of source code must retain the above copyright notice,
-##      this list of conditions and the following disclaimer.
-##    * Redistributions in binary form must reproduce the above copyright notice,
-##      this list of conditions and the following disclaimer in the documentation
-##      and/or other materials provided with the distribution.
-##    * Neither the name of NeuroPy nor the names of its contributors
-##      may be used to endorse or promote products derived from this software
-##      without specific prior written permission.
-##
-##THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
-##"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
-##LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
-##A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
-##CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-##EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-##PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-##PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-##LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-##NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-##SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
+# do not add entry if attention value is 0
 import serial
-import _thread
-
+import _thread as thread
+import base64
+import binascii
+import numpy as np
+from pathlib import Path
 class NeuroPy(object):
-    """NeuroPy libraby, to get data from neurosky mindwave.
-    Initialising: object1=NeuroPy("COM6",57600) #windows
-    After initialising , if required the callbacks must be set
-    then using the start method the library will start fetching data from mindwave
-    i.e. object1.start()
-    similarly stop method can be called to stop fetching the data
-    i.e. object1.stop()
-
-    The data from the device can be obtained using either of the following methods or both of them together:
-
-    Obtaining value: variable1=object1.attention #to get value of attention
-    #other variables: attention,meditation,rawValue,delta,theta,lowAlpha,highAlpha,lowBeta,highBeta,lowGamma,midGamma, poorSignal and blinkStrength
-
-    Setting callback:a call back can be associated with all the above variables so that a function is called when the variable is updated. Syntax: setCallBack("variable",callback_function)
-    for eg. to set a callback for attention data the syntax will be setCallBack("attention",callback_function)"""
     __attention=0
     __meditation=0
     __rawValue=0
@@ -61,14 +22,15 @@ class NeuroPy(object):
     srl=None
     __port=None
     __baudRate=None
-
+    __history = None
+    p = None
     threadRun=True #controlls the running of thread
     callBacksDictionary={} #keep a track of all callbacks
     def __init__(self,port,baudRate=57600):
         self.__port,self.__baudRate=port,baudRate
 
-    def __del__(self):
-        self.srl.close()
+    #def __del__(self):
+        #self.srl.close()
 
     def start(self):
         """starts packetparser in a separate thread"""
@@ -80,22 +42,22 @@ class NeuroPy(object):
         "packetParser runs continously in a separate thread to parse packets from mindwave and update the corresponding variables"
         #srl.open()
         while self.threadRun:
-            p1=srl.read(1).encode("hex") #read first 2 packets
-            p2=srl.read(1).encode("hex")
+            p1=srl.read(1).hex() #read first 2 packets
+            p2=srl.read(1).hex()
             while p1!='aa' or p2!='aa':
                 p1=p2
-                p2=srl.read(1).encode("hex")
+                p2=srl.read(1).hex()
             else:
                 #a valid packet is available
                 payload=[]
                 checksum=0;
-                payloadLength=int(srl.read(1).encode("hex"),16)
+                payloadLength=int(srl.read(1).hex(),16)
                 for i in range(payloadLength):
-                    tempPacket=srl.read(1).encode("hex")
+                    tempPacket=srl.read(1).hex()
                     payload.append(tempPacket)
                     checksum+=int(tempPacket,16)
                 checksum=~checksum&0x000000ff
-                if checksum==int(srl.read(1).encode("hex"),16):
+                if checksum==int(srl.read(1).hex(),16):
                    i=0
                    while i<payloadLength:
                        code=payload[i]
@@ -106,7 +68,8 @@ class NeuroPy(object):
                        elif(code=='05'):#meditation
                            i=i+1; self.meditation=int(payload[i],16)
                        elif(code=='16'):#blink strength
-                           i=i+1; self.blinkStrength=int(payload[i],16)
+                            i=i+1; self.blinkStrength=int(payload[i],16)
+                            #  i=i+1; self.blinkStrength=int(1000)
                        elif(code=='80'):#raw value
                            i=i+1 #for length/it is not used since length =1 byte long and always=2
                            i=i+1; val0=int(payload[i],16)
@@ -147,6 +110,7 @@ class NeuroPy(object):
                            i=i+1; val0=int(payload[i],16)
                            i=i+1; val1=int(payload[i],16)
                            i=i+1; self.midGamma=val0*65536+val1*256+int(payload[i],16)
+                           self.__history = None
                        else:
                            pass
                        i=i+1
@@ -176,7 +140,7 @@ class NeuroPy(object):
     @attention.setter
     def attention(self,value):
         self.__attention=value
-        if self.callBacksDictionary.has_key("attention"): #if callback has been set, execute the function
+        if 'attention' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["attention"](self.__attention)
 
     #meditation
@@ -187,7 +151,7 @@ class NeuroPy(object):
     @meditation.setter
     def meditation(self,value):
         self.__meditation=value
-        if self.callBacksDictionary.has_key("meditation"): #if callback has been set, execute the function
+        if 'meditation' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["meditation"](self.__meditation)
 
     #rawValue
@@ -198,7 +162,7 @@ class NeuroPy(object):
     @rawValue.setter
     def rawValue(self,value):
         self.__rawValue=value
-        if self.callBacksDictionary.has_key("rawValue"): #if callback has been set, execute the function
+        if 'rawValue' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["rawValue"](self.__rawValue)
 
     #delta
@@ -209,7 +173,7 @@ class NeuroPy(object):
     @delta.setter
     def delta(self,value):
         self.__delta=value
-        if self.callBacksDictionary.has_key("delta"): #if callback has been set, execute the function
+        if 'delta' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["delta"](self.__delta)
 
     #theta
@@ -220,7 +184,7 @@ class NeuroPy(object):
     @theta.setter
     def theta(self,value):
         self.__theta=value
-        if self.callBacksDictionary.has_key("theta"): #if callback has been set, execute the function
+        if 'theta' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["theta"](self.__theta)
 
     #lowAlpha
@@ -231,7 +195,7 @@ class NeuroPy(object):
     @lowAlpha.setter
     def lowAlpha(self,value):
         self.__lowAlpha=value
-        if self.callBacksDictionary.has_key("lowAlpha"): #if callback has been set, execute the function
+        if 'lowAlpha' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["lowAlpha"](self.__lowAlpha)
 
     #highAlpha
@@ -242,7 +206,7 @@ class NeuroPy(object):
     @highAlpha.setter
     def highAlpha(self,value):
         self.__highAlpha=value
-        if self.callBacksDictionary.has_key("highAlpha"): #if callback has been set, execute the function
+        if 'highAlpha' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["highAlpha"](self.__highAlpha)
 
 
@@ -254,7 +218,7 @@ class NeuroPy(object):
     @lowBeta.setter
     def lowBeta(self,value):
         self.__lowBeta=value
-        if self.callBacksDictionary.has_key("lowBeta"): #if callback has been set, execute the function
+        if 'lowBeta' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["lowBeta"](self.__lowBeta)
 
     #highBeta
@@ -265,7 +229,7 @@ class NeuroPy(object):
     @highBeta.setter
     def highBeta(self,value):
         self.__highBeta=value
-        if self.callBacksDictionary.has_key("highBeta"): #if callback has been set, execute the function
+        if 'highBeta' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["highBeta"](self.__highBeta)
 
     #lowGamma
@@ -276,7 +240,7 @@ class NeuroPy(object):
     @lowGamma.setter
     def lowGamma(self,value):
         self.__lowGamma=value
-        if self.callBacksDictionary.has_key("lowGamma"): #if callback has been set, execute the function
+        if 'lowGamma' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["lowGamma"](self.__lowGamma)
 
     #midGamma
@@ -287,7 +251,7 @@ class NeuroPy(object):
     @midGamma.setter
     def midGamma(self,value):
         self.__midGamma=value
-        if self.callBacksDictionary.has_key("midGamma"): #if callback has been set, execute the function
+        if 'midGamma' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["midGamma"](self.__midGamma)
 
     #poorSignal
@@ -298,7 +262,7 @@ class NeuroPy(object):
     @poorSignal.setter
     def poorSignal(self,value):
         self.__poorSignal=value
-        if self.callBacksDictionary.has_key("poorSignal"): #if callback has been set, execute the function
+        if 'poorSignal' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["poorSignal"](self.__poorSignal)
 
     #blinkStrength
@@ -309,5 +273,9 @@ class NeuroPy(object):
     @blinkStrength.setter
     def blinkStrength(self,value):
         self.__blinkStrength=value
-        if self.callBacksDictionary.has_key("blinkStrength"): #if callback has been set, execute the function
+        if 'blinkStrength' in self.callBacksDictionary.keys(): #if callback has been set, execute the function
             self.callBacksDictionary["blinkStrength"](self.__blinkStrength)
+    # def on_blink(headset, blink_strength):
+    #     print("Blink detected. Strength: %s" % blink_strength)
+    #     headset.blink_handlers.append(on_blink)
+
