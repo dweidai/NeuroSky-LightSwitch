@@ -27,26 +27,21 @@
 ##SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import serial
-import _thread
-import logging
+import time
+import sys
 import struct
+import _thread as thread
 
+
+SYNC = b'\xaa'
+POOR_SIGNAL = b'\x02'
+ATTENTION = b'\x04'
+MEDITATION = b'\x05'
+BLINK_STRENGTH = b'\x16'
+RAW_VALUE = b'\x80'
+ASIC_EEG_POWER = b'\x83'
 
 class NeuroPy(object):
-    """NeuroPy libraby, to get data from neurosky mindwave.
-    Initialising: object1=NeuroPy("COM6",57600) #windows
-    After initialising , if required the callbacks must be set
-    then using the start method the library will start fetching data from mindwave
-    i.e. object1.start()
-    similarly stop method can be called to stop fetching the data
-    i.e. object1.stop()
-    The data from the device can be obtained using either of the following methods or both of them together:
-
-    Obtaining value: variable1=object1.attention #to get value of attention
-    #other variables: attention,meditation,rawValue,delta,theta,lowAlpha,highAlpha,lowBeta,highBeta,lowGamma,midGamma, poorSignal and blinkStrength
-
-    Setting callback:a call back can be associated with all the above variables so that a function is called when the variable is updated. Syntax: setCallBack("variable",callback_function)
-    for eg. to set a callback for attention data the syntax will be setCallBack("attention",callback_function)"""
     __attention=0
     __meditation=0
     __rawValue=0
@@ -60,267 +55,352 @@ class NeuroPy(object):
     __midGamma=0
     __poorSignal=0
     __blinkStrength=0
+
     srl=None
     __port=None
     __baudRate=None
 
-    SYNC = b'\xaa'
-    POOR_SIGNAL = b'\x02'
-    ATTENTION = b'\x04'
-    MEDITATION = b'\x05'
-    BLINK_STRENGTH = b'\x16'
-    RAW_VALUE = b'\x80'
-    ASIC_EEG_POWER = b'\x83'
-
-    logging.basicConfig(level=logging.DEBUG)
-
-
-    threadRun=True #controlls the running of thread
-    callBacksDictionary={} #keep a track of all callbacks
-    def __init__(self,port,baudRate=57600):
+    callBacksDictionary = {}  # keep a track of all callbacks
+    running = True #here we mark it start running
+    def __init__(self, port, baudRate=57600):
+        platform = sys.platform
+        print(platform)
         self.__port,self.__baudRate=port,baudRate
-
+        self.__packetsReceived = 0
+    
     def __del__(self):
+        if self.running == True:
+            self.running = False
         self.srl.close()
-
+    
+    #need stderr in python
+    def eprint(*args, **kwargs):
+        print(*args, file=sys.stderr, **kwargs)
+    # disconnect function should be no longer needed as long as we stop the srl
+    '''def disconnect(self):
+        self.__srl.write(DISCONNECT) '''
+    # connect function no longer needed, we will do it in the start function
+    '''def connect(self):
+        self.__connected = True
+        return # Only connect RF devices
+        self.__srl.write(''.join([CONNECT, self.__devid.decode('hex')])) '''
+    
     def start(self):
-        """starts packetparser in a separate thread"""
-        self.threadRun=True
-        self.srl=serial.Serial(self.__port)
-        _thread.start_new_thread(self.__packetParser,(self.srl,))
+        # Try to connect to serial port and start a separate thread
+        # for data collection
+        self.running = True
+        print ("Mindwave has already started!")
+        try:
+            self.srl=serial.Serial(self.__port)
+        except serial.serialutil.SerialException:
+            eprint ("Mindewave could not start due to Serial Exception")
+        thread.start_new_thread(self.__packetParser,(self.srl,))
+        self.__packetsReceived = 0
 
-    def __packetParser(self,srl):
+
+    def __packetParser(self, srl):
         "packetParser runs continously in a separate thread to parse packets from mindwave and update the corresponding variables"
-        while self.threadRun:
-            p1=srl.read(1) #read first 2 packets
-            p2=srl.read(1)
-            while p1!=self.SYNC or p2!=self.SYNC:
-                p1=p2
-                p2=srl.read(1)
+        while self.running:
+            p1 = srl.read(1).hex()  # read first 2 packets
+            p2 = srl.read(1).hex()
+            while (p1 != 'aa' or p2 != 'aa'):
+                p1 = p2
+                p2 = srl.read(1).hex()
             else:
-                #a valid packet is available
-                payload=[]
-                checksum=0;
-                #payloadLength=int(srl.read(1),16)
-                payloadLength=struct.unpack('B', srl.read(1))[0]
+                if self.running == False:
+                    break
+                # a valid packet is available
+                self.__packetsReceived += 1
+                payload = []
+                checksum = 0
+                payloadLength = int(srl.read(1).hex(), 16)
                 for i in range(payloadLength):
-                    tempPacket=srl.read(1)
+                    tempPacket = srl.read(1).hex()
                     payload.append(tempPacket)
-                    checksum+=struct.unpack('B', tempPacket)[0]
-                checksum=~checksum&0x000000ff
-                if checksum==struct.unpack('B', srl.read(1))[0]:
-                   i=0
-                   while i<payloadLength:
-                       code=payload[i]
-                       if(code==self.POOR_SIGNAL):#poorSignal
-                           i=i+1; self.poorSignal=struct.unpack('B', payload[i])[0]
-                       elif(code==self.ATTENTION):#attention
-                           i=i+1; self.attention=struct.unpack('B', payload[i])[0]
-                       elif(code==self.MEDITATION):#meditation
-                           i=i+1; self.meditation=struct.unpack('B', payload[i])[0]
-                       elif(code==self.BLINK_STRENGTH):#blink strength
-                           i=i+1; self.blinkStrength=struct.unpack('B', payload[i])[0]
-                       elif(code==self.RAW_VALUE):#raw value
-                           i=i+1 #for length/it is not used since length =1 byte long and always=2
-                           i=i+1; val0=struct.unpack('B', payload[i])[0]
-                           i=i+1; self.rawValue=val0*256+struct.unpack('B', payload[i])[0]
-                           if self.rawValue>32768 :
-                               self.rawValue=self.rawValue-65536
-                       elif(code==self.ASIC_EEG_POWER):#ASIC_EEG_POWER
-                           i=i+1;#for length/it is not used since length =1 byte long and always=2
-                           #delta:
-                           i=i+1; val0=struct.unpack('B', payload[i])[0]
-                           i=i+1; val1=struct.unpack('B', payload[i])[0]
-                           i=i+1; self.delta=val0*65536+val1*256+struct.unpack('B', payload[i])[0]
-                           #theta:
-                           i=i+1; val0=struct.unpack('B', payload[i])[0]
-                           i=i+1; val1=struct.unpack('B', payload[i])[0]
-                           i=i+1; self.theta=val0*65536+val1*256+struct.unpack('B', payload[i])[0]
-                           #lowAlpha:
-                           i=i+1; val0=struct.unpack('B', payload[i])[0]
-                           i=i+1; val1=struct.unpack('B', payload[i])[0]
-                           i=i+1; self.lowAlpha=val0*65536+val1*256+struct.unpack('B', payload[i])[0]
-                           #highAlpha:
-                           i=i+1; val0=struct.unpack('B', payload[i])[0]
-                           i=i+1; val1=struct.unpack('B', payload[i])[0]
-                           i=i+1; self.highAlpha=val0*65536+val1*256+struct.unpack('B', payload[i])[0]
-                           #lowBeta:
-                           i=i+1; val0=struct.unpack('B', payload[i])[0]
-                           i=i+1; val1=struct.unpack('B', payload[i])[0]
-                           i=i+1; self.lowBeta=val0*65536+val1*256+struct.unpack('B', payload[i])[0]
-                           #highBeta:
-                           i=i+1; val0=struct.unpack('B', payload[i])[0]
-                           i=i+1; val1=struct.unpack('B', payload[i])[0]
-                           i=i+1; self.highBeta=val0*65536+val1*256+struct.unpack('B', payload[i])[0]
-                           #lowGamma:
-                           i=i+1; val0=struct.unpack('B', payload[i])[0]
-                           i=i+1; val1=struct.unpack('B', payload[i])[0]
-                           i=i+1; self.lowGamma=val0*65536+val1*256+struct.unpack('B', payload[i])[0]
-                           #midGamma:
-                           i=i+1; val0=struct.unpack('B', payload[i])[0]
-                           i=i+1; val1=struct.unpack('B', payload[i])[0]
-                           i=i+1; self.midGamma=val0*65536+val1*256+struct.unpack('B', payload[i])[0]
-                       else:
-                           pass
-                       i=i+1
-
-
-
+                    checksum += int(tempPacket, 16)
+                checksum = ~checksum & 0x000000ff
+                if checksum == int(srl.read(1).hex(), 16):
+                    i = 0
+                
+                    while i < payloadLength:
+                        code = payload[i]
+                        if (code == 'd0'):
+                            print("Headset connected!")
+                        elif (code == 'd1' or code == 'd2' or code == 'd3' or code == 'd4'):
+                            eprint("Headset connection failed")
+                        elif(code == '02'):  # poorSignal
+                                i = i + 1
+                                self.poorSignal = int(payload[i], 16)
+                        elif(code == '04'):  # attention
+                                i = i + 1
+                                self.attention = int(payload[i], 16)
+                        elif(code == '05'):  # meditation
+                            i = i + 1
+                            self.meditation = int(payload[i], 16)
+                        elif(code == '16'):  # blink strength
+                            i = i + 1
+                            self.blinkStrength = int(payload[i], 16)
+                        elif(code == '80'):  # raw value
+                            i = i + 1  # for length/it is not used since length =1 byte long and always=2
+                            i = i + 1
+                            val0 = int(payload[i], 16)
+                            i = i + 1
+                            self.rawValue = val0 * 256 + int(payload[i], 16)
+                            if self.rawValue > 32768:
+                                self.rawValue = self.rawValue - 65536
+                        elif(code == '83'):  # ASIC_EEG_POWER
+                            i = i + 1  # for length/it is not used since length =1 byte long and always=2
+                            # delta:
+                            i = i + 1
+                            val0 = int(payload[i], 16)
+                            i = i + 1
+                            val1 = int(payload[i], 16)
+                            i = i + 1
+                            self.delta = val0 * 65536 + val1 * 256 + int(payload[i], 16)
+                            # theta:
+                            i = i + 1
+                            val0 = int(payload[i], 16)
+                            i = i + 1
+                            val1 = int(payload[i], 16)
+                            i = i + 1
+                            self.theta = val0 * 65536 + val1 * 256 + int(payload[i], 16)
+                            # lowAlpha:
+                            i = i + 1
+                            val0 = int(payload[i], 16)
+                            i = i + 1
+                            val1 = int(payload[i], 16)
+                            i = i + 1
+                            self.lowAlpha = val0 * 65536 + val1 * 256 + int(payload[i], 16)
+                            # highAlpha:
+                            i = i + 1
+                            val0 = int(payload[i], 16)
+                            i = i + 1
+                            val1 = int(payload[i], 16)
+                            i = i + 1
+                            self.highAlpha = val0 * 65536 + val1 * 256 + int(payload[i], 16)
+                            # lowBeta:
+                            i = i + 1
+                            val0 = int(payload[i], 16)
+                            i = i + 1
+                            val1 = int(payload[i], 16)
+                            i = i + 1
+                            self.lowBeta = val0 * 65536 + val1 * 256 + int(payload[i], 16)
+                            # highBeta:
+                            i = i + 1
+                            val0 = int(payload[i], 16)
+                            i = i + 1
+                            val1 = int(payload[i], 16)
+                            i = i + 1
+                            self.highBeta = val0 * 65536 + val1 * 256 + int(payload[i], 16)
+                            # lowGamma:
+                            i = i + 1
+                            val0 = int(payload[i], 16)
+                            i = i + 1
+                            val1 = int(payload[i], 16)
+                            i = i + 1
+                            self.lowGamma = val0 * 65536 + val1 * 256 + int(payload[i], 16)
+                            # midGamma:
+                            i = i + 1
+                            val0 = int(payload[i], 16)
+                            i = i + 1
+                            val1 = int(payload[i], 16)
+                            i = i + 1
+                            self.midGamma = val0 * 65536 + val1 * 256 + int(payload[i], 16)
+                        else:
+                            pass
+                        i = i + 1
+                              
+                              
     def stop(self):
-        "stops packetparser's thread and releases com port i.e disconnects mindwave"
-        self.threadRun=False
-        self.srl.close()
-
-
-
-
-    def setCallBack(self,variable_name,callback_function):
+        # Stops a running parser thread
+        if self.__threadRun == True:
+            self.__threadRun = False
+            self.__srl.close()
+                        
+    def setCallBack(self, variable_name, callback_function):
         """Setting callback:a call back can be associated with all the above variables so that a function is called when the variable is updated. Syntax: setCallBack("variable",callback_function)
-           for eg. to set a callback for attention data the syntax will be setCallBack("attention",callback_function)"""
-        self.callBacksDictionary[variable_name]=callback_function
-
-    #setting getters and setters for all variables
-
-    #attention
+            for eg. to set a callback for attention data the syntax will be setCallBack("attention",callback_function)"""
+        self.callBacksDictionary[variable_name] = callback_function
+                              
+    # setting getters and setters for all variables
+    # packets received
+    @property
+    def packetsReceived(self):
+        return self.__packetsReceived
+                        
+    @property
+    def bytesAvailable(self, srl):
+        if self.running:
+            return srl.inWaiting()
+        else:
+            return -1
+                              
+    # attention
     @property
     def attention(self):
         "Get value for attention"
         return self.__attention
+                              
     @attention.setter
-    def attention(self,value):
-        self.__attention=value
-        if "attention" in self.callBacksDictionary: #if callback has been set, execute the function
+    def attention(self, value):
+        self.__attention = value
+        # if callback has been set, execute the function
+        if "attention" in self.callBacksDictionary:
             self.callBacksDictionary["attention"](self.__attention)
-
-    #meditation
+                              
+    # meditation
     @property
     def meditation(self):
         "Get value for meditation"
         return self.__meditation
+                              
     @meditation.setter
-    def meditation(self,value):
-        self.__meditation=value
-        if "meditation" in self.callBacksDictionary: #if callback has been set, execute the function
+    def meditation(self, value):
+        self.__meditation = value
+        # if callback has been set, execute the function
+        if "meditation" in self.callBacksDictionary:
             self.callBacksDictionary["meditation"](self.__meditation)
-
-    #rawValue
+                        
+    # rawValue
     @property
     def rawValue(self):
         "Get value for rawValue"
         return self.__rawValue
+                    
     @rawValue.setter
-    def rawValue(self,value):
-        self.__rawValue=value
-        if "rawValue" in self.callBacksDictionary: #if callback has been set, execute the function
+    def rawValue(self, value):
+        self.__rawValue = value
+        # if callback has been set, execute the function
+        if "rawValue" in self.callBacksDictionary:
             self.callBacksDictionary["rawValue"](self.__rawValue)
-
-    #delta
+                              
+    # delta
     @property
     def delta(self):
         "Get value for delta"
         return self.__delta
+                            
     @delta.setter
-    def delta(self,value):
-        self.__delta=value
-        if "delta" in self.callBacksDictionary: #if callback has been set, execute the function
+    def delta(self, value):
+        self.__delta = value
+        # if callback has been set, execute the function
+        if "delta" in self.callBacksDictionary:
             self.callBacksDictionary["delta"](self.__delta)
-
-    #theta
+                              
+    # theta
     @property
     def theta(self):
         "Get value for theta"
         return self.__theta
+                              
     @theta.setter
-    def theta(self,value):
-        self.__theta=value
-        if "theta" in self.callBacksDictionary: #if callback has been set, execute the function
+    def theta(self, value):
+        self.__theta = value
+        # if callback has been set, execute the function
+        if "theta" in self.callBacksDictionary:
             self.callBacksDictionary["theta"](self.__theta)
-
-    #lowAlpha
+                        
+    # lowAlpha
     @property
     def lowAlpha(self):
         "Get value for lowAlpha"
         return self.__lowAlpha
+                    
     @lowAlpha.setter
-    def lowAlpha(self,value):
-        self.__lowAlpha=value
-        if "lowAlpha" in self.callBacksDictionary: #if callback has been set, execute the function
+    def lowAlpha(self, value):
+        self.__lowAlpha = value
+        # if callback has been set, execute the function
+        if "lowAlpha" in self.callBacksDictionary:
             self.callBacksDictionary["lowAlpha"](self.__lowAlpha)
-
-    #highAlpha
+                            
+    # highAlpha
     @property
     def highAlpha(self):
         "Get value for highAlpha"
         return self.__highAlpha
+            
     @highAlpha.setter
-    def highAlpha(self,value):
-        self.__highAlpha=value
-        if "highAlpha" in self.callBacksDictionary: #if callback has been set, execute the function
+    def highAlpha(self, value):
+        self.__highAlpha = value
+        # if callback has been set, execute the function
+        if "highAlpha" in self.callBacksDictionary:
             self.callBacksDictionary["highAlpha"](self.__highAlpha)
-
-
-    #lowBeta
+                              
+    # lowBeta
     @property
     def lowBeta(self):
         "Get value for lowBeta"
         return self.__lowBeta
+                    
     @lowBeta.setter
-    def lowBeta(self,value):
-        self.__lowBeta=value
-        if "lowBeta" in self.callBacksDictionary: #if callback has been set, execute the function
+    def lowBeta(self, value):
+        self.__lowBeta = value
+        # if callback has been set, execute the function
+        if "lowBeta" in self.callBacksDictionary:
             self.callBacksDictionary["lowBeta"](self.__lowBeta)
-
-    #highBeta
+                            
+    # highBeta
     @property
     def highBeta(self):
         "Get value for highBeta"
         return self.__highBeta
+                        
     @highBeta.setter
-    def highBeta(self,value):
-        self.__highBeta=value
-        if "highBeta" in self.callBacksDictionary: #if callback has been set, execute the function
+    def highBeta(self, value):
+        self.__highBeta = value
+        # if callback has been set, execute the function
+        if "highBeta" in self.callBacksDictionary:
             self.callBacksDictionary["highBeta"](self.__highBeta)
-
-    #lowGamma
+                              
+    # lowGamma
     @property
     def lowGamma(self):
         "Get value for lowGamma"
         return self.__lowGamma
+                              
     @lowGamma.setter
-    def lowGamma(self,value):
-        self.__lowGamma=value
-        if "lowGamma" in self.callBacksDictionary: #if callback has been set, execute the function
+    def lowGamma(self, value):
+        self.__lowGamma = value
+        # if callback has been set, execute the function
+        if "lowGamma" in self.callBacksDictionary:
             self.callBacksDictionary["lowGamma"](self.__lowGamma)
-
-    #midGamma
+                            
+    # midGamma
     @property
     def midGamma(self):
         "Get value for midGamma"
         return self.__midGamma
+                              
     @midGamma.setter
-    def midGamma(self,value):
-        self.__midGamma=value
-        if "midGamma" in self.callBacksDictionary: #if callback has been set, execute the function
+    def midGamma(self, value):
+        self.__midGamma = value
+        # if callback has been set, execute the function
+        if "midGamma" in self.callBacksDictionary:
             self.callBacksDictionary["midGamma"](self.__midGamma)
-
-    #poorSignal
+                              
+    # poorSignal
     @property
     def poorSignal(self):
         "Get value for poorSignal"
         return self.__poorSignal
+                    
     @poorSignal.setter
-    def poorSignal(self,value):
-        self.__poorSignal=value
-        if "poorSignal" in self.callBacksDictionary: #if callback has been set, execute the function
+    def poorSignal(self, value):
+        self.__poorSignal = value
+        # if callback has been set, execute the function
+        if "poorSignal" in self.callBacksDictionary:
             self.callBacksDictionary["poorSignal"](self.__poorSignal)
-
-    #blinkStrength
+                        
+    # blinkStrength
     @property
     def blinkStrength(self):
         "Get value for blinkStrength"
         return self.__blinkStrength
+                              
     @blinkStrength.setter
-    def blinkStrength(self,value):
-        self.__blinkStrength=value
-        if "blinkStrength" in self.callBacksDictionary: #if callback has been set, execute the function
+    def blinkStrength(self, value):
+        self.__blinkStrength = value
+        # if callback has been set, execute the function
+        if "blinkStrength" in self.callBacksDictionary:
             self.callBacksDictionary["blinkStrength"](self.__blinkStrength)
+

@@ -1,21 +1,25 @@
-int led = 13;
+char inByte;
 
 void setup() {
-  // put your setup code here, to run once:
-  Serial.begin(9600); // set the baud rate
-  Serial.println("Ready"); // print "Ready" once
+  pinMode(LED_BUILTIN, OUTPUT);
+  Serial.begin(9600);
+  Serial.println("Ready");
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  char input = ' ';
-  if(Serial.available()){ // only send data back if data has been sent
-    char input = Serial.read(); // read the incoming data
+  if (Serial.available() > 0) { // only send data back if data has been sent
+    inByte = Serial.read(); // read the incoming data
+    Serial.println(inByte); // send the data back in a new line so that it is not all one long line
+    if(inByte == '0'){
+      digitalWrite(LED_BUILTIN, LOW);
+    }
+    else if(inByte == '1'){
+      digitalWrite(LED_BUILTIN, HIGH);
+    }
   }
-  if(input == '0'){
-    DigitalWrite(led, HIGH);
-  }
-  else if(input == '1'){
-    DigitalWrite(led, LOW);
+  else{
+    Serial.println("No input");
+    digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
+    delay(100);
   }
 }

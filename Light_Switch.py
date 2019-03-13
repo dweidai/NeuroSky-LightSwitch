@@ -1,57 +1,70 @@
-from NeuroPy import NeuroPy
+from NeuroPy.NeuroPy import NeuroPy
+import serial
 import keyboard
-import serial # if you have not already done so
+import time
 
+
+print("program started")
+f = open("testfile.txt", "w") #just a txt file to keep track of the record
+ser = serial.Serial('/dev/tty.usbmodem14201', 9600) #connect to the arduino
+print("aruidno connected")
+headset = NeuroPy("/dev/cu.MindWaveMobile-SerialPo", 57600) #connect to the Neurosky Headset
+print("heatset initialized")
+time.sleep(0.1)
+
+# writing to arduino serial to turn on light
+def light_on():
+    ser.write('1')
+
+# writing to arduino serial to turn off light
+def light_off():
+    ser.write('0')
+
+# asking Neuropy to return the attention value
 def attention_callback(attention_value):
-    #"this function will be called everytime NeuroPy has a new value for attention"
-    print ("Value of attention is",attention_value)
-    return None
+    return attention_value
 
-if __name__ == '__main__':
-    print("program started")
-    #f = open("testfile.txt", "w")
-    headset=NeuroPy("COM6") #If port not given 57600 is automatically assumed
-    #headset=NeuroPy("/dev/cu.MindWaveMobile-SerialPort") #for linux
-    ser = serial.Serial('/dev/tty.usbserial', 9600)
+# asking Neuropy to return the meditation value
+def meditation_callback(meditation_value):
+    return meditation_value
 
-    #set call back:
-    headset.setCallBack("attention",attention_callback)
+#start reading data
+headset.start()
+print("headset started")
 
-    #call start method
-    headset.start()
-    confirm_meditate = 0
-    confirm_attention = 0
-    nb = input('To quit, press spacebar')
-    #while True:
-    #    if(object1.meditation>70): #another way of accessing data provided by headset (1st being call backs)
-    #        object1.stop() #if meditation level reaches above 70, stop fetching data from the headset
-    while True:
-        if(headset.meditation > 70):
-            confirm_meditation += 1
-            confirm_attention = 0
-        if(headset.attention > 70):
-            confirm_attentation += 1
-            confirm_meditation = 0
-        if(confirm_meditaiton > 10):
-            ser.write("0\n")
-            f.write("0 ")
-        elif(confirm_attention > 10):
-            ser.write("1\n")
-            f.write("1 ")
-        try:
-            if keyboard.is_pressed('q'):
-                headset.stop()
-                ser.write("0\n")
-                ser.write("Session ended")
-                f.write("SESSION ENDED")
-                break
-            else:
-                pass
-        except:
+confirm_meditate = 0 #counting number of iterations to confirm data sending
+confirm_attention = 0
+attention_threshold = 85 #set by hand
+meditation_threshold = 75 #set by hand, should be different for each subject
+iteration = 7 # 7 is a lucky number and 0.7 seconds is a reasonable focus time
+
+while True:
+    #extract values from the headset
+    attention = headset.setCallBack("attention",attention_callback)
+    meditation = headset.setCallBack("meditation", meditation_callback)
+    time.sleep(0.1)
+    '''print("Attention: ", attention) #print to the terminal
+    print("Meditation: ", meditation)'''
+    f.write(str(attention)+ "\t" (str(meditation)+ "\n") #write to the file
+    if(meditation > meditation_threshold):
+        confirm_meditation += 1
+        confirm_attention = 0
+    if(attention > attention_threshold):
+        confirm_attentation += 1
+        confirm_meditation = 0
+    if(confirm_meditaiton > iteration): #only send the value if it pass certain number of iterations
+        light_on()
+    elif(confirm_attention > iteration):
+        light_off()
+
+    try: #if the user press control+c or q, the program will stop and shut down neurosky
+        if keyboard.is_pressed('q'):
             headset.stop()
-            ser.write("0\n")
-            f.write("Quit UNEXPECTED")
-            print("\t!!!!\nIncorrect input, quit unexpected\n\t!!!!!!\n")
-            break  # if user pressed a key other than the given key the loop will break
-
-
+            print("headset closed")
+            break
+        else:
+            pass
+    except:
+        headset.stop()
+        print("headset closed")
+        break
