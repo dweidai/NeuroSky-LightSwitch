@@ -213,8 +213,8 @@ class NeuroPy(object):
                               
     def stop(self):
         # Stops a running parser thread
-        if self.__threadRun == True:
-            self.__threadRun = False
+        if self.running == True:
+            self.running = False
             self.__srl.close()
                         
     def setCallBack(self, variable_name, callback_function):
